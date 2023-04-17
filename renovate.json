@@ -6,7 +6,7 @@
     "regexManagers": [
         {
             "fileMatch": ["^.buildpacks$"],
-            "matchStrings": ["https://github.com/1024pix/metabase-buildpack#(?<currentValue>\\S+)\\n?"],
+            "matchStrings": ["https://github.com/1024pix/metabase-buildpack#v(?<currentValue>\\S+)\\n?"],
             "depNameTemplate": "1024pix/metabase-buildpack",
             "datasourceTemplate": "github-tags",
             "extractVersionTemplate": "v(?<version>.*)"
