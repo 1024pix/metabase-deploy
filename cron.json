@@ -1,7 +1,0 @@
-{
-  "jobs": [
-    {
-      "command": "0 * * * * ./check_version.sh"
-    }
-  ]
-}
