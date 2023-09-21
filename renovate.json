@@ -3,6 +3,7 @@
     "extends": ["github>1024pix/renovate-config:default.json"],
     "enabled": true,
     "includeForks": true,
+    "minimumReleaseAge": "0",
     "regexManagers": [
         {
             "fileMatch": ["^.buildpacks$"],
