@@ -1,13 +1,20 @@
 {
     "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "extends": ["github>1024pix/renovate-config:default.json"],
+    "extends": [
+        "github>1024pix/renovate-config:default.json"
+    ],
     "enabled": true,
-    "includeForks": true,
+    "forkProcessing": "enabled",
     "minimumReleaseAge": "0",
-    "regexManagers": [
+    "customManagers": [
         {
-            "fileMatch": ["^.buildpacks$"],
-            "matchStrings": ["https://github.com/1024pix/metabase-buildpack#v(?<currentValue>\\S+)\\n?"],
+            "customType": "regex",
+            "fileMatch": [
+                "^.buildpacks$"
+            ],
+            "matchStrings": [
+                "https://github.com/1024pix/metabase-buildpack#v(?<currentValue>\\S+)\\n?"
+            ],
             "depNameTemplate": "1024pix/metabase-buildpack",
             "datasourceTemplate": "github-tags",
             "extractVersionTemplate": "v(?<version>.*)"
