@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "command": "7 * * * * bash ./scripts/make-table-visible.sh sessions",
+      "size": "S"
+    },
+    {
+      "command": "20 * * * * bash ./scripts/make-table-visible.sh sessions",
+      "size": "S"
+    }
+  ]
+}
