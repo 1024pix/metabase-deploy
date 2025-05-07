@@ -9,8 +9,8 @@
     "customManagers": [
         {
             "customType": "regex",
-            "fileMatch": [
-                "^.buildpacks$"
+            "managerFilePatterns": [
+                "/^.buildpacks$/"
             ],
             "matchStrings": [
                 "https://github.com/1024pix/metabase-buildpack#v(?<currentValue>\\S+)\\n?"
