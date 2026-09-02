@@ -1,9 +1,11 @@
 {
     "$schema": "https://docs.renovatebot.com/renovate-schema.json",
     "extends": [
-        "github>1024pix/renovate-config:buildpack-project"
+        "github>1024pix/renovate-config:default"
     ],
     "enabled": true,
+    "forkProcessing": "enabled",
+    "minimumReleaseAge": "0",
     "customManagers": [
         {
             "customType": "regex",
