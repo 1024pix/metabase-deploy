@@ -6,6 +6,7 @@
     "enabled": true,
     "forkProcessing": "enabled",
     "minimumReleaseAge": "0",
+    "schedule": ["* * * * 1-5"],
     "customManagers": [
         {
             "customType": "regex",
