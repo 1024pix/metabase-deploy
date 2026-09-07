@@ -82,10 +82,10 @@ if [ ! -z "$RDS_HOSTNAME" ]; then
     export MB_DB_PORT=$RDS_PORT
 fi
 
-# Determine whether we're running inside a PaaS container (Scalingo or Heroku).
+# Determine whether we're running inside a Scalingo container.
 #
-# We set $HEROKU in the Procfile. Scalingo additionally injects $CONTAINER_MEMORY
-# (container RAM, in bytes) and $CONTAINER_SIZE (S, M, L, XL, ...).
+# Scalingo injects $CONTAINER_MEMORY (container RAM, in bytes) and $CONTAINER_SIZE
+# (S, M, L, XL, ...), so there is nothing to set by hand.
 #
 # Scalingo's buildpack-jvm-common already exported JAVA_OPTS and JAVA_TOOL_OPTIONS
 # with an -XX:MaxRAM taken from the cgroup limit, plus a heap size. For S/M/L/XL it
@@ -100,8 +100,8 @@ fi
 # limit: on 2XL that is 2868m heap + 320 + 192 + 128 + ~230m of G1 overhead + threads,
 # i.e. ~3.8G out of 4G.
 
-if [ -n "$HEROKU" ] || [ -n "$CONTAINER_MEMORY" ]; then
-    echo "  -> PaaS container detected (size: ${CONTAINER_SIZE:-unknown})"
+if [ -n "$CONTAINER_MEMORY" ]; then
+    echo "  -> Scalingo container detected (size: ${CONTAINER_SIZE:-unknown})"
     # Bound every area so the total footprint stays predictable. Keep the caps roomy:
     # combined with -XX:+ExitOnOutOfMemoryError below, a cap set too low turns a slow
     # leak into an immediate crash.
