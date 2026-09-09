@@ -108,16 +108,23 @@ fi
 if [ -n "$CONTAINER_MEMORY" ]; then
     container_mb=$((CONTAINER_MEMORY / 1024 / 1024))
 
-    # Ceilings for the areas the buildpack leaves unbounded, plus a fixed allowance
-    # for everything that has no flag at all (thread stacks, symbol tables, JIT
-    # arenas, malloc). These barely grow with the container: they depend on how many
-    # classes Metabase loads and how many threads it runs, not on the heap size.
-    # Keep them roomy: combined with -XX:+ExitOnOutOfMemoryError, a ceiling set too
-    # low turns a slow leak into an immediate crash.
-    if   [ "$container_mb" -ge 4096 ]; then metaspace=320; codecache=192; direct=128; jvm_base=160
-    elif [ "$container_mb" -ge 2048 ]; then metaspace=256; codecache=128; direct=96;  jvm_base=128
-    elif [ "$container_mb" -ge 1024 ]; then metaspace=192; codecache=96;  direct=64;  jvm_base=96
-    else                                    metaspace=160; codecache=64;  direct=32;  jvm_base=64
+    # Metaspace and code cache are properties of the application, not of the
+    # container: Metabase loads the same classes and JITs the same code whether it
+    # runs on L or on 3XL. Sizing them per container size is what made 320m look
+    # reasonable on 2XL, and integration then died on it with an OutOfMemoryError:
+    # Metaspace. They are constants, and they form the fixed cost a container has to
+    # clear before it can host Metabase at all.
+    #
+    # Keep them roomy: combined with -XX:+ExitOnOutOfMemoryError below, a ceiling set
+    # too low does not degrade the app, it stops it from booting.
+    metaspace=512   # Clojure generates a class per fn, and every driver adds its own
+    codecache=192   # A full code cache silently disables the JIT
+
+    # These two do follow the container: they scale with the thread count, hence with
+    # the load the container is sized for.
+    if   [ "$container_mb" -ge 4096 ]; then direct=128; jvm_base=160
+    elif [ "$container_mb" -ge 2048 ]; then direct=96;  jvm_base=128
+    else                                    direct=64;  jvm_base=96
     fi
 
     # Two terms above are estimates rather than enforced ceilings: $jvm_base, and the
@@ -129,11 +136,19 @@ if [ -n "$CONTAINER_MEMORY" ]; then
     # sets, mark bitmap, card table), which runs at roughly 8% of the heap it manages.
     # So heap * 1.08 = what remains, hence the /108.
     heap=$(((container_mb - metaspace - codecache - direct - jvm_base - reserve) * 100 / 108))
-    if [ "$heap" -lt 256 ]; then
-        # S (256m) and M (512m) cannot hold Metabase anyway; emit a usable -Xmx rather
-        # than a nonsensical or negative one, and say why in the deploy log.
-        echo "  -> WARNING: a ${CONTAINER_SIZE:-${container_mb}m} container is too small for Metabase, forcing -Xmx256m"
-        heap=256
+    if [ "$heap" -lt 384 ]; then
+        # Below XL, Metabase's fixed cost leaves too little for a usable heap, and the
+        # invariant above simply cannot hold. Emitting the computed -Xmx here would
+        # produce a heap too small to serve anything -- worse than the over-commit it
+        # avoids. So fall back to a flat share of the container, close to what the
+        # budget yields on XL, and downgrade the ceilings to what they can still be on
+        # this size: crash guards that turn a runaway area into a named error instead
+        # of a SIGKILL. They no longer guarantee the container is never overrun.
+        heap=$((container_mb * 47 / 100))
+        echo "  -> WARNING: a ${CONTAINER_SIZE:-${container_mb}m} container cannot hold Metabase's fixed cost"
+        echo "  -> WARNING: (metaspace ${metaspace}m + code cache ${codecache}m + ${jvm_base}m base) next to a usable heap"
+        echo "  -> WARNING: falling back to -Xmx${heap}m; the ceilings are crash guards only here, OOM-kill stays possible"
+        echo "  -> WARNING: use XL or larger to get a guaranteed budget"
     fi
 
     echo "  -> Scalingo container detected (size: ${CONTAINER_SIZE:-unknown}, ${container_mb}m)"
