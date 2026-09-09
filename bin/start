@@ -161,15 +161,6 @@ if [ -n "$CONTAINER_MEMORY" ]; then
     JAVA_OPTS+=" -Xss512k"                                # The buildpack only sets this on S and M containers
     JAVA_OPTS+=" -XX:+UseG1GC"                            # G1GC seems to use slightly less memory in my testing...
     JAVA_OPTS+=" -XX:+UseStringDeduplication"             # Especially when used in combination with string deduplication
-
-    # Opt-in, off by default: logs metaspace usage at every GC, so the ceilings above
-    # can be re-sized from a measured peak instead of an estimate. Noisy, and it
-    # bypasses the log4j2 setup the README documents -- turn it on for a run, read
-    # the peak, turn it off again.
-    if [ "$MB_JVM_DEBUG_MEMORY" = "true" ]; then
-        echo "  -> MB_JVM_DEBUG_MEMORY is on: logging metaspace usage at every GC"
-        JAVA_OPTS+=" -Xlog:gc+metaspace=info:stderr:time,tags"
-    fi
 fi
 
 # Other Java options
