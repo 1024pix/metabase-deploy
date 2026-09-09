@@ -88,30 +88,64 @@ fi
 # (S, M, L, XL, ...), so there is nothing to set by hand.
 #
 # Scalingo's buildpack-jvm-common already exported JAVA_OPTS and JAVA_TOOL_OPTIONS
-# with an -XX:MaxRAM taken from the cgroup limit, plus a heap size. For S/M/L/XL it
-# uses a hardcoded -Xmx; for any other size (2XL, 3XL) it falls back to
-# -XX:MaxRAMPercentage=80.0, which is too greedy for Metabase: a large G1 heap
-# carries ~8% of native overhead on top of the metaspace Clojure needs.
+# with an -XX:MaxRAM taken from the cgroup limit, plus a heap size: a hardcoded -Xmx
+# for S/M/L/XL (59% of the container on M, up to 75% on XL) and, for any other size
+# (2XL, 3XL), -XX:MaxRAMPercentage=80.0. Both are too greedy for Metabase: none of
+# them leaves room for the metaspace Clojure fills, nor for the ~8% of native
+# overhead a G1 heap carries on top of itself.
 #
-# So we never set -Xmx (an explicit -Xmx always wins over a percentage, whatever the
-# order, so the buildpack keeps deciding on S/M/L/XL) and only lower the percentage,
-# which therefore applies to 2XL/3XL alone. The off-heap areas the buildpack leaves
-# unbounded are capped below, so that the sum of all maxima stays under the container
-# limit: on 2XL that is 2868m heap + 320 + 192 + 128 + ~230m of G1 overhead + threads,
-# i.e. ~3.8G out of 4G.
+# So we size every area here instead, from $CONTAINER_MEMORY alone, and the same
+# rule applies to every container size. The buildpack's flags still come first, ours
+# are appended, and the last -Xmx on the command line wins -- which is also why no
+# per-app JAVA_OPTS override is needed any more.
+#
+# The budget is built so that the heap plus *every* ceiling below plus the JVM's own
+# fixed cost stays under the container limit. The point is not to squeeze the last
+# megabyte out, it is that a runaway area hits a JVM OutOfMemoryError -- which
+# -XX:+ExitOnOutOfMemoryError below turns into a clean restart -- instead of a silent
+# SIGKILL from the kernel, which leaves nothing to diagnose.
 
 if [ -n "$CONTAINER_MEMORY" ]; then
-    echo "  -> Scalingo container detected (size: ${CONTAINER_SIZE:-unknown})"
-    # Bound every area so the total footprint stays predictable. Keep the caps roomy:
-    # combined with -XX:+ExitOnOutOfMemoryError below, a cap set too low turns a slow
-    # leak into an immediate crash.
-    JAVA_OPTS+=" -XX:MaxRAMPercentage=70.0"        # Only effective on sizes the buildpack has no -Xmx case for (2XL, 3XL)
-    JAVA_OPTS+=" -XX:MaxMetaspaceSize=320m"        # Unbounded metaspace is the main OOM-kill cause: Clojure generates a lot of classes
-    JAVA_OPTS+=" -XX:ReservedCodeCacheSize=192m"   # A full code cache silently disables the JIT, so stay well above what Metabase needs
-    JAVA_OPTS+=" -XX:MaxDirectMemorySize=128m"     # NIO buffers (Jetty I/O, JDBC drivers) are allocated outside the heap
-    JAVA_OPTS+=" -Xss512k"                         # The buildpack only sets this on S and M containers
-    JAVA_OPTS+=" -XX:+UseG1GC"                     # G1GC seems to use slightly less memory in my testing...
-    JAVA_OPTS+=" -XX:+UseStringDeduplication"      # Especially when used in combination with string deduplication
+    container_mb=$((CONTAINER_MEMORY / 1024 / 1024))
+
+    # Ceilings for the areas the buildpack leaves unbounded, plus a fixed allowance
+    # for everything that has no flag at all (thread stacks, symbol tables, JIT
+    # arenas, malloc). These barely grow with the container: they depend on how many
+    # classes Metabase loads and how many threads it runs, not on the heap size.
+    # Keep them roomy: combined with -XX:+ExitOnOutOfMemoryError, a ceiling set too
+    # low turns a slow leak into an immediate crash.
+    if   [ "$container_mb" -ge 4096 ]; then metaspace=320; codecache=192; direct=128; jvm_base=160
+    elif [ "$container_mb" -ge 2048 ]; then metaspace=256; codecache=128; direct=96;  jvm_base=128
+    elif [ "$container_mb" -ge 1024 ]; then metaspace=192; codecache=96;  direct=64;  jvm_base=96
+    else                                    metaspace=160; codecache=64;  direct=32;  jvm_base=64
+    fi
+
+    # Two terms above are estimates rather than enforced ceilings: $jvm_base, and the
+    # G1 overhead below. Keep 5% of the container aside so being wrong about either
+    # eats into slack instead of into the kernel's patience.
+    reserve=$((container_mb / 20))
+
+    # Whatever is left over goes to the heap, minus G1's own native cost (remembered
+    # sets, mark bitmap, card table), which runs at roughly 8% of the heap it manages.
+    # So heap * 1.08 = what remains, hence the /108.
+    heap=$(((container_mb - metaspace - codecache - direct - jvm_base - reserve) * 100 / 108))
+    if [ "$heap" -lt 256 ]; then
+        # S (256m) and M (512m) cannot hold Metabase anyway; emit a usable -Xmx rather
+        # than a nonsensical or negative one, and say why in the deploy log.
+        echo "  -> WARNING: a ${CONTAINER_SIZE:-${container_mb}m} container is too small for Metabase, forcing -Xmx256m"
+        heap=256
+    fi
+
+    echo "  -> Scalingo container detected (size: ${CONTAINER_SIZE:-unknown}, ${container_mb}m)"
+    echo "  -> JVM budget: heap ${heap}m + metaspace ${metaspace}m + code cache ${codecache}m + direct ${direct}m + ~$((heap * 8 / 100))m G1 + ${jvm_base}m base + ${reserve}m spare"
+
+    JAVA_OPTS+=" -Xmx${heap}m"                            # Wins over the buildpack's own -Xmx / MaxRAMPercentage, whichever applies
+    JAVA_OPTS+=" -XX:MaxMetaspaceSize=${metaspace}m"      # Unbounded metaspace is the main OOM-kill cause: Clojure generates a lot of classes
+    JAVA_OPTS+=" -XX:ReservedCodeCacheSize=${codecache}m" # A full code cache silently disables the JIT, so stay well above what Metabase needs
+    JAVA_OPTS+=" -XX:MaxDirectMemorySize=${direct}m"      # NIO buffers (Jetty I/O, JDBC drivers) are allocated outside the heap
+    JAVA_OPTS+=" -Xss512k"                                # The buildpack only sets this on S and M containers
+    JAVA_OPTS+=" -XX:+UseG1GC"                            # G1GC seems to use slightly less memory in my testing...
+    JAVA_OPTS+=" -XX:+UseStringDeduplication"             # Especially when used in combination with string deduplication
 fi
 
 # Other Java options
