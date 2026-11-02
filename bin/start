@@ -158,6 +158,9 @@ if [ -n "$CONTAINER_MEMORY" ]; then
     JAVA_OPTS+=" -XX:MaxMetaspaceSize=${metaspace}m"      # Unbounded metaspace is the main OOM-kill cause: Clojure generates a lot of classes
     JAVA_OPTS+=" -XX:ReservedCodeCacheSize=${codecache}m" # A full code cache silently disables the JIT, so stay well above what Metabase needs
     JAVA_OPTS+=" -XX:MaxDirectMemorySize=${direct}m"      # NIO buffers (Jetty I/O, JDBC drivers) are allocated outside the heap
+    JAVA_OPTS+=" -Djdk.nio.maxCachedBufferSize=262144"    # Metabase opens its own jar as a zip filesystem to serve resources, reading its ~37m central
+                                                          # directory through a temporary direct buffer; the JDK caches those per thread with no size
+                                                          # limit by default, so two Jetty threads were enough to pin 74m and exhaust the 96m above
     JAVA_OPTS+=" -Xss512k"                                # The buildpack only sets this on S and M containers
     JAVA_OPTS+=" -XX:+UseG1GC"                            # G1GC seems to use slightly less memory in my testing...
     JAVA_OPTS+=" -XX:+UseStringDeduplication"             # Especially when used in combination with string deduplication
